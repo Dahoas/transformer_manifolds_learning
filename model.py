@@ -10,6 +10,7 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 import math
 import inspect
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
@@ -167,7 +168,8 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, output_hidden_states=False, **kwargs):
+        hidden_states = []
         device = idx.device
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
@@ -179,6 +181,7 @@ class GPT(nn.Module):
         x = self.transformer.drop(tok_emb + pos_emb)
         for block in self.transformer.h:
             x = block(x)
+            hidden_states.append(x)
         x = self.transformer.ln_f(x)
 
         if targets is not None:
@@ -190,7 +193,15 @@ class GPT(nn.Module):
             logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
             loss = None
 
+        if output_hidden_states:
+            return SimpleNamespace(logits=logits, loss=loss, hidden_states=hidden_states)
+
         return logits, loss
+
+    def __call__(self, *args, **kwargs):
+        if "input_ids" in kwargs:
+            kwargs["idx"] = kwargs.pop("input_ids")
+        return self.forward(*args, **kwargs)
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary
